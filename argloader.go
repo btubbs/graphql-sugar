@@ -12,8 +12,6 @@ import (
 
 type tagKey string
 
-var defaultLoader *ArgLoader
-
 const (
 	defaultTag                = "arg"
 	defaultSeparator          = ","
@@ -54,7 +52,7 @@ func New() (*ArgLoader, error) {
 		return nil, fmt.Errorf("could not load default arg funcs: %v", err)
 	}
 	for _, l := range DefaultLoaders {
-		err = ec.Register(l.LoaderFunc, l.GqlType)
+		err = ec.RegisterArgParser(l.LoaderFunc, l.GqlType)
 		if err != nil {
 			return nil, err
 		}
@@ -66,7 +64,7 @@ func New() (*ArgLoader, error) {
 func Base() (*ArgLoader, error) {
 	ec := Empty()
 	for _, l := range BaseLoaders {
-		err := ec.Register(l.LoaderFunc, l.GqlType)
+		err := ec.RegisterArgParser(l.LoaderFunc, l.GqlType)
 		if err != nil {
 			return nil, err
 		}
@@ -171,21 +169,9 @@ func (e *ArgLoader) SafeArgsConfig(i interface{}) (graphql.FieldConfigArgument, 
 	return out, nil
 }
 
-// ResolveType gets the type for either a struct or a pointer
-func (e *ArgLoader) ResolveType(i interface{}) reflect.Type {
-	var structType reflect.Type
-	iType := reflect.TypeOf(i)
-	if iType.Kind() == reflect.Ptr {
-		structType = iType.Elem()
-	} else {
-		structType = reflect.TypeOf(i)
-	}
-	return structType
-}
-
-// Register takes a func (string) (<anytype>, error) and registers it on the ArgLoader as
+// RegisterArgParser takes a func (string) (<anytype>, error) and registers it on the ArgLoader as
 // the parser for <anytype>
-func (e *ArgLoader) Register(f interface{}, gqlType graphql.Output) error {
+func (e *ArgLoader) RegisterArgParser(f interface{}, gqlType graphql.Output) error {
 	// alright, let's inspect this f and make sure it's a func (string) (sometype, err)
 	t := reflect.TypeOf(f)
 	if t.Kind() != reflect.Func {
@@ -222,13 +208,13 @@ func (e *ArgLoader) Register(f interface{}, gqlType graphql.Output) error {
 	callable := reflect.ValueOf(f)
 	wrapped := func(i interface{}, config map[tagKey]string) (v reflect.Value, err error) {
 		defer func() {
-			p := recover()
-			if p != nil {
+			if p := recover(); p != nil {
 				// we panicked running the inner loader func.
 				err = fmt.Errorf("%s panicked: %s", fname, p)
 			}
 		}()
 		returnvals := callable.Call([]reflect.Value{reflect.ValueOf(i)})
+		// check for non nil error
 		if !returnvals[1].IsNil() {
 			return reflect.Value{}, fmt.Errorf("%v", returnvals[1])
 		}
@@ -279,7 +265,7 @@ func (e *ArgLoader) LoadArgs(p graphql.ResolveParams, c interface{}) error {
 		toSet, err := loaderFunc(interfaceVal, config)
 		if err != nil {
 			if _, ok := config[tagKeyCoalesceZero]; !ok {
-				multierror.Append(fmt.Errorf("%s is not valid", argName))
+				valErrs = multierror.Append(valErrs, fmt.Errorf("%s is not valid", argName))
 				continue
 			}
 			toSet = reflect.Zero(field.Type)
