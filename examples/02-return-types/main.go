@@ -13,22 +13,35 @@ import (
 
 func main() {
 
-	mutationType := graphql.NewObject(
-		graphql.ObjectConfig{
-			Name: "Mutation",
-			Fields: graphql.Fields{
-				"saveUser": &graphql.Field{
-					Type:    userType,
-					Args:    sugar.ArgsConfig(user{}),
-					Resolve: resolveSaveUser,
-				},
-			},
-		})
-
+	var userType = sugar.OutputType("User", "A user, dummy", user{})
 	schema, _ := graphql.NewSchema(
 		graphql.SchemaConfig{
-			Query:    queryType,
-			Mutation: mutationType,
+			Query: graphql.NewObject(
+				graphql.ObjectConfig{
+					Name: "Query",
+					Fields: graphql.Fields{
+						"user": &graphql.Field{
+							Type: userType, // this user graphql type is defined below
+							Args: graphql.FieldConfigArgument{
+								"id": &graphql.ArgumentConfig{
+									Type: graphql.String,
+								},
+							},
+							Resolve: resolveUser, // this resolver is defined below
+						},
+					},
+				}),
+			Mutation: graphql.NewObject(
+				graphql.ObjectConfig{
+					Name: "Mutation",
+					Fields: graphql.Fields{
+						"saveUser": &graphql.Field{
+							Type:    userType,
+							Args:    sugar.ArgsConfig(user{}),
+							Resolve: resolveSaveUser,
+						},
+					},
+				}),
 		},
 	)
 
@@ -42,55 +55,13 @@ func main() {
 	http.ListenAndServe(":8080", nil)
 }
 
-func executeQuery(query string, schema graphql.Schema) *graphql.Result {
-	result := graphql.Do(graphql.Params{
-		Schema:        schema,
-		RequestString: query,
-	})
-	if len(result.Errors) > 0 {
-		fmt.Printf("wrong result, unexpected errors: %v", result.Errors)
-	}
-	return result
-}
-
 type user struct {
-	ID               string     `json:"id" arg:"id,required" desc:"A short identifier for this user."`
-	Name             string     `json:"name" arg:"name,required" desc:"This user's name."`
-	JoinedAt         time.Time  `json:"joinedAt"`
-	NumberOfChildren int        `json:"numberOfChildren" arg:"numberOfChildren" desc:"The number of children that this user has."`
-	FavoriteMovies   moviesList `json:"favoriteMovies" arg:"favoriteMovies" desc:"A JSON-formatted list of this user's favorite movies."`
+	ID               string    `json:"id" arg:"id,required" desc:"A short identifier for this user."`
+	Name             string    `json:"name" arg:"name,required" desc:"This user's name."`
+	JoinedAt         time.Time `json:"joinedAt"`
+	NumberOfChildren int       `json:"numberOfChildren" arg:"numberOfChildren" desc:"The number of children that this user has."`
+	FavoriteMovies   []string  `json:"favoriteMovies" arg:"favoriteMovies" desc:"A JSON-formatted list of this user's favorite movies."`
 }
-
-var userType = sugar.OutputType("User", "A user, dummy", user{})
-
-var data = map[string]user{
-	"bob": {
-		ID:   "bob",
-		Name: "Bob Loblaw",
-		FavoriteMovies: []string{
-			"The Shawshank Redemption",
-			"Weekend at Bernie's 2",
-		},
-		NumberOfChildren: 7,
-		JoinedAt:         time.Date(2012, time.February, 3, 9, 19, 38, 4213, time.UTC),
-	},
-}
-
-var queryType = graphql.NewObject(
-	graphql.ObjectConfig{
-		Name: "Query",
-		Fields: graphql.Fields{
-			"user": &graphql.Field{
-				Type: userType,
-				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
-						Type: graphql.String,
-					},
-				},
-				Resolve: resolveUser,
-			},
-		},
-	})
 
 func resolveUser(p graphql.ResolveParams) (interface{}, error) {
 	argID, ok := p.Args["id"].(string)
@@ -104,20 +75,18 @@ func resolveUser(p graphql.ResolveParams) (interface{}, error) {
 	}
 }
 
-type moviesList []string
-
 func init() {
-	parseMoviesList := func(arg interface{}) (moviesList, error) {
+	parseStringArray := func(arg interface{}) ([]string, error) {
 		if ms, ok := arg.([]interface{}); ok {
-			out := moviesList{}
+			out := []string{}
 			for _, m := range ms {
 				out = append(out, m.(string))
 			}
 			return out, nil
 		}
-		return nil, errors.New("invalid movie list")
+		return nil, errors.New("invalid string array")
 	}
-	if err := sugar.RegisterArgParser(parseMoviesList, graphql.NewList(graphql.String)); err != nil {
+	if err := sugar.RegisterArgParser(parseStringArray, graphql.NewList(graphql.String)); err != nil {
 		panic(err)
 	}
 }
@@ -130,4 +99,17 @@ func resolveSaveUser(p graphql.ResolveParams) (interface{}, error) {
 	u.JoinedAt = time.Now()
 	data[u.ID] = u
 	return u, nil
+}
+
+var data = map[string]user{
+	"bob": {
+		ID:   "bob",
+		Name: "Bob Loblaw",
+		FavoriteMovies: []string{
+			"The Shawshank Redemption",
+			"Weekend at Bernie's 2",
+		},
+		NumberOfChildren: 7,
+		JoinedAt:         time.Date(2012, time.February, 3, 9, 19, 38, 4213, time.UTC),
+	},
 }

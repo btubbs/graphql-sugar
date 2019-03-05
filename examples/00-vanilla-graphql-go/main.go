@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +11,49 @@ import (
 )
 
 func main() {
+	schema, _ := graphql.NewSchema(
+		graphql.SchemaConfig{
+			Query: graphql.NewObject(
+				graphql.ObjectConfig{
+					Name: "Query",
+					Fields: graphql.Fields{
+						"user": &graphql.Field{
+							Type: userType, // this user graphql type is defined below
+							Args: graphql.FieldConfigArgument{
+								"id": &graphql.ArgumentConfig{
+									Type: graphql.String,
+								},
+							},
+							Resolve: resolveUser, // this resolver is defined below
+						},
+					},
+				}),
+			Mutation: graphql.NewObject(
+				graphql.ObjectConfig{
+					Name: "Mutation",
+					Fields: graphql.Fields{
+						"saveUser": &graphql.Field{
+							Type: userType, // same user type as in the "user" resolver
+							Args: graphql.FieldConfigArgument{
+								"id": &graphql.ArgumentConfig{
+									Type: graphql.String,
+								},
+								"name": &graphql.ArgumentConfig{
+									Type: graphql.String,
+								},
+								"numberOfChildren": &graphql.ArgumentConfig{
+									Type: graphql.Int,
+								},
+								"favoriteMovies": &graphql.ArgumentConfig{
+									Type: graphql.NewList(graphql.String),
+								},
+							},
+							Resolve: resolveSaveUser, // this mutation resolver is defined below
+						},
+					},
+				}),
+		},
+	)
 
 	h := handler.New(&handler.Config{
 		Schema:   &schema,
@@ -23,17 +65,7 @@ func main() {
 	http.ListenAndServe(":8080", nil)
 }
 
-func executeQuery(query string, schema graphql.Schema) *graphql.Result {
-	result := graphql.Do(graphql.Params{
-		Schema:        schema,
-		RequestString: query,
-	})
-	if len(result.Errors) > 0 {
-		fmt.Printf("wrong result, unexpected errors: %v", result.Errors)
-	}
-	return result
-}
-
+// user is the actual struct type that will be returned by our "user" and "saveUser" resolvers.
 type user struct {
 	ID               string    `json:"id"`
 	Name             string    `json:"name"`
@@ -42,6 +74,8 @@ type user struct {
 	FavoriteMovies   []string  `json:"favoriteMovies"`
 }
 
+// userType is a graphql-go representation of a GraphQL type for our users.  This is where we
+// declare what will be available in the schema for clients.
 var userType = graphql.NewObject(
 	graphql.ObjectConfig{
 		Name: "User",
@@ -65,42 +99,7 @@ var userType = graphql.NewObject(
 	},
 )
 
-var data = map[string]user{
-	"bob": {
-		ID:   "bob",
-		Name: "Bob Loblaw",
-		FavoriteMovies: []string{
-			"The Shawshank Redemption",
-			"Weekend at Bernie's 2",
-		},
-		NumberOfChildren: 7,
-		JoinedAt:         time.Date(2012, time.February, 3, 9, 19, 38, 4213, time.UTC),
-	},
-}
-
-var schema, _ = graphql.NewSchema(
-	graphql.SchemaConfig{
-		Query:    queryType,
-		Mutation: mutationType,
-	},
-)
-
-var queryType = graphql.NewObject(
-	graphql.ObjectConfig{
-		Name: "Query",
-		Fields: graphql.Fields{
-			"user": &graphql.Field{
-				Type: userType,
-				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
-						Type: graphql.String,
-					},
-				},
-				Resolve: resolveUser,
-			},
-		},
-	})
-
+// resolveUser looks for a user in our data store and returns it if found
 func resolveUser(p graphql.ResolveParams) (interface{}, error) {
 	argID, ok := p.Args["id"].(string)
 	if !ok {
@@ -113,31 +112,7 @@ func resolveUser(p graphql.ResolveParams) (interface{}, error) {
 	}
 }
 
-var mutationType = graphql.NewObject(
-	graphql.ObjectConfig{
-		Name: "Mutation",
-		Fields: graphql.Fields{
-			"saveUser": &graphql.Field{
-				Type: userType,
-				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
-						Type: graphql.String,
-					},
-					"name": &graphql.ArgumentConfig{
-						Type: graphql.String,
-					},
-					"numberOfChildren": &graphql.ArgumentConfig{
-						Type: graphql.Int,
-					},
-					"favoriteMovies": &graphql.ArgumentConfig{
-						Type: graphql.String,
-					},
-				},
-				Resolve: resolveSaveUser,
-			},
-		},
-	})
-
+// resolveSaveUser upserts a user into our data store.
 func resolveSaveUser(p graphql.ResolveParams) (interface{}, error) {
 	var id string
 	newUser := user{}
@@ -162,21 +137,30 @@ func resolveSaveUser(p graphql.ResolveParams) (interface{}, error) {
 		return nil, errors.New("numberOfChildren is not an int")
 	}
 
-	if arg, ok := p.Args["favoriteMovies"].(string); ok {
-		// favoriteMovies should be a JSON formatted list of strings
-		var movies []string
-		err := json.Unmarshal([]byte(arg), &movies)
-		if err != nil {
-			return nil, errors.New("could not parse favoriteMovies; not a valid JSON array")
+	if arg, ok := p.Args["favoriteMovies"].([]interface{}); ok {
+		for _, movie := range arg {
+			newUser.FavoriteMovies = append(newUser.FavoriteMovies, movie.(string))
 		}
-		newUser.FavoriteMovies = movies
-	} else {
-		return nil, errors.New("favoriteMovies is not a string")
 	}
-
 	// save user
+	newUser.JoinedAt = time.Now()
 	data[id] = newUser
 
 	// return user
 	return newUser, nil
+}
+
+// because this is an example and not a real app, just maintain state in memory.  Start with one
+// user.
+var data = map[string]user{
+	"bob": {
+		ID:   "bob",
+		Name: "Bob Loblaw",
+		FavoriteMovies: []string{
+			"The Shawshank Redemption",
+			"Weekend at Bernie's 2",
+		},
+		NumberOfChildren: 7,
+		JoinedAt:         time.Date(2012, time.February, 3, 9, 19, 38, 4213, time.UTC),
+	},
 }
